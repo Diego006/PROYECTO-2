@@ -1,0 +1,417 @@
+---
+title: "Proyecto 2"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Librerias
+```{r}
+library(psych)
+library(dplyr)
+library(stringr)
+library(datasets.load)
+library(tidyverse)
+library(tm)
+library(tidytext)
+library(quanteda)
+library(quanteda.textstats)
+library(ggplot2)
+library(wordcloud)
+library(lubridate)
+library(readxl)
+library(chron)
+library(factoextra)
+library(flexclust)
+library(cluster)
+library(ggdendro)
+library(factoextra)
+library(knitr)
+```
+
+
+## Limpieza de datos
+Para este dataset el proceso de limpieza de datos será un poco más extensa por lo que debemos ir por partes
+
+- Primero verificar la existencia de valores NA o faltante
+- Realizaremos un estudio para ver la porción representativas de canciones con las que trabajaremos con respecto al dataframe original. 
+-Analizaremos promedios, suma total, min, etc. y a partir de eso ocuparemos un porcentaje del dataframe que sea representativo y con valores estadísticos parecidos
+
+- Probaremos con el 2%, 2,5% y 5% de los datos y veremos si el los indicadores de MIN, MEDIAN, MEAN, 3RD QU, MAX son valores cercanos al dataframe con el 100% de los datos. Teniendo en cuenta que las variables analizar para el cluster son la lista de variables numéricas como DANCEABILITY, ENERGY, INSTRUMENTALNESS VALANCE , TEMPO Y ACOUSTICNESS
+(Lamentablemente mi computador no puede trabajar con más del 2% de los datos, aun así el 2 de los datos sigue siendo representativo, los valores de las a variables a estudiar para la formación del cluster son cercano al de lo dataframe original )
+
+Primero hicimos el estudio con la data completa y a partir de esto es que generamos un archivo csv (write.table()) para trabajar de manera más rápida.
+
+
+```{r}
+#beats1 <- beats
+#summary(beats1)
+```
+
+## Cargamos los datos 
+```{r}
+setwd("C:/Users/Dieca/OneDrive/Escritorio/FINAL P2 DIEGO")
+beats1 <- read.csv("beats1.csv", sep = ",")
+
+```
+
+
+Como bien lo mencionamos anteriormente ocupamos el 2% de la dataframe
+lo escrito en "#" es como obtuvimos nuestro archivo csv.
+
+
+```{r}
+beats1 <- beats1 %>% slice_sample(n= 8953)
+summary(beats1)
+#write.table(beats1, file = "beats1.csv", sep = ",", col.names = NA,
+ #        qmethod = "double")
+```
+
+
+- Segundo filtrar y remover datos duplicados
+```{r limpieza duplicados}
+beats1 <- beats1[!duplicated(beats1$track_id),]
+
+```
+
+- tercero, Seguimos con la limpieza
+Separamos las variables numéricas y char dos dataframes distintos
+
+```{r}
+beats1_char <- c("artist_name", "artist_id", "album_id", "album_type", "album_release_date", "album_release_date_precision", "track_id", "analysis_url", "track_href", "track_name", "track_preview_url", "type", "track_uri", "external_urls.spotify", "album_name", "key_name", "mode_name", "key_mode")
+beats1_num <- c("danceability", "energy", "key", "loudness", "mode", "speechiness", "acousticness", "instrumentalness", "liveness", "valence", "tempo", "duration_ms")
+beats1 <- beats1 %>% 
+  filter(!(is.na(key)|is.na(danceability)))
+summary(beats1)
+str(beats1)
+
+
+```
+
+## Separo Datos
+```{r separar datos}
+beats1num <- beats1 %>% 
+  select(beats1_num)
+beats1char <- beats1 %>% 
+  select(beats1_char)
+```
+
+## Escalar Datos
+```{r escalar datos}
+beats1_sca <- sapply(beats1num, scale)
+beats1_sca %>% summary()
+  
+```
+ 
+ ##  Clusters Jerarquicos
+ 
+ Calcularemos las distancias euclidianas a partir de la matriz de distancias entre las entidades. 
+```{r}
+#Distancia euclideana
+d = dist(beats1_sca, method = "euclidean")
+
+hist(d)
+```
+Utilizando la función de R base hclust, aplicamos hierarchical clustering, a partir de la matriz de distancias d, y utilizamos el criterio complete linkage
+
+```{r}
+
+model_complete = hclust(d, method="complete") 
+
+summary(model_complete)
+```
+Generamos un dendrograma para visualizar la jerarquía. 
+utilizamos la función vista en clases de ggdendrogram
+
+
+```{r}
+ggdendrogram(model_complete, rotate = TRUE, theme_dendro = TRUE) 
+```
+
+
+
+```{r}
+model_ward = hclust(d, method="ward.D") 
+#model_ward2 = hclust(d, method="ward.D2") 
+#model_single = hclust(d, method="single")
+model_average = hclust(d, method="average") 
+#model_mcquitty = hclust(d, method="mcquitty") 
+#model_median = hclust(d, method="median") 
+#model_centroid = hclust(d, method="centroid") 
+
+summary(model_ward)
+```
+
+## Arboles 
+Realizaremos el corte en h=5 y veremos cuantos clusters vamos a obtener. 
+```{r}
+groups <- cutree(model_complete, h = 5)
+coefsil <- silhouette(groups, d)
+groups %>% unique() %>% length()
+summary(coefsil)
+##se generan 119 clusters
+```
+
+
+
+##Puntos de corte 
+Compararemos distintos puntos de corte de la jerarquía
+
+
+```{r}
+res <- tibble("h" = quantile(d, probs  = (1:100)/100), n = 0)
+
+for (i in 1:100){
+  groups <- cutree(model_average, h = res$h[i])  
+  res$n[i] <- groups %>% unique() %>% length()
+}  
+
+ggplot(res, aes(h, n)) + 
+  geom_point() + 
+  scale_x_log10() + 
+  scale_y_log10()
+```
+
+## Corte
+
+ Determinamos un valor para h lo que nos entregara un valor distinto de k para cada h que escogamos, tambien podemos definir el k desde un inicio
+ Se imprimen los tamaños de cada cluster
+ Generamos una nueva columna para almacenar a que cluster pertenece cada observacion (tanto en data_pre y datanum)
+ Graficamos las observaciones agrupadas por su cluster
+```{r corte arbol}
+groups <- cutree(model_complete, h = 10)
+table(groups)
+beats1$clust <- as.factor(groups)
+beats1num$clust <- as.factor(groups)
+fviz_cluster(list(data = beats1_sca, cluster = groups))
+```
+
+
+
+## Caracteristicas de los clusters encontrados
+```{r caracteristicas clusters}
+beats1num$clust <- as.numeric(as.character(beats1num$clust))
+# Generamos una tabla que almacenara los valores promedios para cada uno de los clusters encontrados lo que nos permitira caracterizar a cada uno de ellos
+infoclusters <- aggregate(beats1num, by=list(cluster=beats1num$clust), mean)
+# Borramos la columna clust ya que se repite esa informacion en la tabla generada
+infoclusters$clust <- NULL
+# Transformamos el tiempo de la cancion a minutos
+infoclusters <- infoclusters %>% mutate(duration_min = infoclusters$duration_ms/60000)
+# Borramos la columna de la duracion en milisegundoss
+infoclusters$duration_ms <- NULL
+infoclusters
+```
+
+##Seperamos los cluster para visualizarlos de mejor manera
+
+```{r}
+beats_clus1 <- filter(beats1, clust == "1")
+beats_clus2 <- filter(beats1, clust == "2")
+beats_clus3 <- filter(beats1, clust == "3")
+beats_clus4 <- filter(beats1, clust == "4")
+beats_clus5 <- filter(beats1, clust == "5")
+beats_clus6 <- filter(beats1, clust == "6")
+beats_clus7 <- filter(beats1, clust == "7")
+#beats_clus8 <- filter(beats1, clust == "8")
+```
+
+#Luego del Analisis Cluster realizado para ver el comportamiento de las variables entre si, a partir de las caracteristicas de los cluster econtrados procederemos a seleccionar las variables que nos permitiran realizar la playlist .
+
+
+
+## cluster 1, Musica clasica y relajante. 
+mode, Contenido melodico
+acousticness, contenido melodico 
+instrumentalness,no tienen contenido vocal 
+
+En esta parte del codigo nos ocupamos de diferenciar las partes de cluster 3, con el fin de que la canciones de esta misma sean aun mas similares, ademas pasamos de trabajar de segundos a minutos para agilizar el trabajo. Usaremos solo aquellas canciones que tengan como valor numerico arriba de 0.5 en acousticness e instrumentalness.
+
+```{r}
+beats_clus1 <- beats_clus1 %>% mutate(duration_min = beats_clus1$duration_ms/60000)
+beats_clus1 <- beats_clus1 %>% select(artist_name, track_name, album_name,  mode, acousticness,instrumentalness, duration_min, clust )
+
+#kable(head(beats_clus2))
+beats_clus1_mode <- filter(beats_clus1, mode == 1)
+beats_clus1_mode_and_acu <- filter(beats_clus1_mode, acousticness > 0.5)
+beats_clus1_m_a_i <- filter(beats_clus1_mode_and_acu, instrumentalness > 0.5)
+```
+
+
+## Empezamos con la creacion de la playlist. 
+
+Para realizar la playlist nos hemos quedado con el cluster 1 de música relajante y clásica. 
+calculamos distancias de cada una de las observaciones y lo guardamos en una matriz. 
+Escogemos una canción del cluster y posteriormente seleccionamos su columna de distancias al resto de las observaciones 
+Por último, ordenamos de menor a mayor
+
+
+```{r}
+spo_playlist <- filter(beats_clus1_m_a_i, clust == 1)
+
+x2 <- spo_playlist[,!colnames(spo_playlist) %in% c("artist_name", "track_name","album_name", "clust")]
+d2 <- dist(x2) %>% as.matrix()
+
+x2$dist_eucl <- d2[,2]
+spo_playlist$dist_eucl <- d2[,2]
+
+x2 <- x2[order(x2$dist_eucl, decreasing = FALSE), ]
+spo_playlist <- spo_playlist[order(spo_playlist$dist_eucl, decreasing = FALSE),]
+```
+
+```{r}
+data_playlist <- spo_playlist[, colnames(spo_playlist) %in% c("artist_name", "track_name","duration_min", "dist_eucl")]
+#data_playlist <- data_playlist[-,]
+#spo_playlist <- spo_playlist[-,]
+
+data_playlist$artist_name <- as.character(data_playlist$artist_name)
+data_playlist$track_name <- as.character(data_playlist$track_name)
+```
+
+
+## Creacion de playlist con ciclo for y while (PLAYLIST MUSICA RELAJANTE/CLASICA)
+Creamos variables de inicio para hacer el recorrido de la duración de la playlist desde 0 a 180 minutos (3 horas de música), es por esto que utilizamos la iteración while con el fin de contarnos la duración de la playlist hasta que el tiempo sea mayor que 180 para que deje de agregar canciones a la lista. El ciclo for para recorrer la lista en si e ir guardando cada canción a esta.
+
+
+
+
+```{r}
+data_playlist
+
+playlist_oficial <- NULL
+durationplaylist_in <- 0
+durationplaylist_fin <- 180
+
+
+while ( durationplaylist_in < durationplaylist_fin) {
+  
+  for(i in nrow(data_playlist)) {
+    durationplaylist_in <- durationplaylist_in
+    
+
+    song <- data_playlist[i,"track_name"]
+    durationsong <- data_playlist[i,"duration_min"]
+    print(song)
+    print(durationsong)
+    
+    
+    
+    if(durationplaylist_in < durationplaylist_fin) {
+      
+      
+      playlist_oficial <- rbind(playlist_oficial, data_playlist[i,])
+      durationplaylist_in <- durationplaylist_in + durationsong
+      data_playlist <- data_playlist[-i,]
+      
+    }  
+      
+    
+    print(durationplaylist_in)
+    #playlist <- rbind(playlist, )
+  }
+
+}
+
+```
+
+
+## cluster 2 
+canciones alegres 
+valence 
+danceability
+tempo
+
+
+
+```{r}
+
+beats_clus2 <- beats_clus2 %>% mutate(duration_min = beats_clus2$duration_ms/60000)
+
+beats_clus2 <- beats_clus2 %>% select(artist_name, track_name, valence, danceability, acousticness, tempo,duration_min, clust)
+#kable(head(beats_clus2))
+beats_clus2_valence <- filter(beats_clus2, valence > 0.5)
+beats_clus2_valence_and_dance <- filter(beats_clus2_valence, danceability > 0.5)
+beats_clus2_v_d_t <- filter(beats_clus2_valence_and_dance, tempo > 110)
+```
+
+
+
+
+
+
+## AHORA CON EL CLUSTER 2 (MUSICA ALEGRE) con la creacion de la playlist. 
+Para realizar la playlist nos hemos quedado con el cluster 2 de música alegre y bailable. 
+calculamos distancias de cada una de las observaciones y lo guardamos en una matriz. 
+Escogemos una canción del cluster y posteriormente seleccionamos su columna de distancias al resto de las observaciones 
+Por último ordenamos de menor a mayor
+
+
+
+```{r}
+spo_playlist_CLUS2 <- filter(beats_clus2_v_d_t, clust == 2)
+
+x2_CLUS2 <- spo_playlist_CLUS2[,!colnames(spo_playlist_CLUS2) %in% c("artist_name", "track_name","album_name", "clust")]
+d2_CLUS2 <- dist(x2_CLUS2) %>% as.matrix()
+
+x2_CLUS2$dist_eucl <- d2_CLUS2[,2]
+spo_playlist_CLUS2$dist_eucl <- d2_CLUS2[,2]
+
+x2_CLUS2 <- x2_CLUS2[order(x2_CLUS2$dist_eucl, decreasing = FALSE), ]
+spo_playlist_CLUS2 <- spo_playlist_CLUS2[order(spo_playlist_CLUS2$dist_eucl, decreasing = FALSE),]
+```
+
+```{r}
+data_playlist_CLUS2 <- spo_playlist_CLUS2[, colnames(spo_playlist_CLUS2) %in% c("artist_name", "track_name","duration_min", "dist_eucl")]
+#data_playlist <- data_playlist[-19,]
+#spo_playlist <- spo_playlist[-19,]
+
+data_playlist_CLUS2$artist_name <- as.character(data_playlist_CLUS2$artist_name)
+data_playlist_CLUS2$track_name <- as.character(data_playlist_CLUS2$track_name)
+```
+
+
+## Creacion de playlist con ciclo for y while (MUSICA ALEGRE Y BAILABLE)
+Creamos variables de inicio para hacer el recorrido de la duración de la playlist desde 0 a 180 minutos (3 horas de música), es por esto que utilizamos la iteración while con el fin de contarnos la duración de la playlist hasta que el tiempo sea mayor que 180 para que deje de agregar canciones a la lista. El ciclo for para recorrer la lista en si e ir guardando cada canción a esta.
+
+
+
+```{r}
+
+data_playlist_CLUS2
+
+playlist_oficial2 <- NULL
+durationplaylist_in2 <- 0
+durationplaylist_fin2 <- 180
+
+
+while ( durationplaylist_in2 < durationplaylist_fin2) {
+  
+  for(i in nrow(data_playlist_CLUS2)) {
+    durationplaylist_in2 <- durationplaylist_in2
+    
+    
+    song2 <- data_playlist_CLUS2[i,"track_name"]
+    durationsong2 <- data_playlist_CLUS2[i,"duration_min"]
+    print(song2)
+    print(durationsong2)
+    
+    
+    
+    if(durationplaylist_in2 < durationplaylist_fin2) {
+      
+      
+      playlist_oficial2 <- rbind(playlist_oficial2, data_playlist_CLUS2[i,])
+      durationplaylist_in2 <- durationplaylist_in2 + durationsong2
+      data_playlist_CLUS2 <- data_playlist_CLUS2[-i,]
+      
+    }  
+      
+    
+    print(durationplaylist_in2)
+    #playlist <- rbind(playlist, )
+  }
+
+}
+
+```
